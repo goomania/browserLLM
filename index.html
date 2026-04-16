@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Local Browser Chat</title>
+    <title>Ying Lin Local Browser Chat</title>
     <style>
       :root {
         --bg: #07111f;
@@ -275,7 +275,8 @@
       }
 
       .field select,
-      .composer textarea {
+      .composer textarea,
+      .system-prompt-editor textarea {
         width: 100%;
         border: 1px solid rgba(255, 255, 255, 0.1);
         background: rgba(4, 10, 19, 0.76);
@@ -295,7 +296,8 @@
       }
 
       .field select:focus,
-      .composer textarea:focus {
+      .composer textarea:focus,
+      .system-prompt-editor textarea:focus {
         border-color: rgba(87, 184, 255, 0.6);
         box-shadow: 0 0 0 4px rgba(87, 184, 255, 0.12);
       }
@@ -397,6 +399,69 @@
         flex-direction: column;
         gap: 1rem;
         scroll-behavior: smooth;
+      }
+
+      .system-prompt-panel {
+        padding: 1rem 1.5rem 0;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      }
+
+      .system-prompt-toggle {
+        width: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: flex-start;
+        gap: 0.7rem;
+        padding: 0.95rem 1rem;
+        border-radius: var(--radius-md);
+        background:
+          linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.02));
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
+      }
+
+      .system-prompt-toggle::before {
+        content: "▸";
+        color: var(--accent);
+        font-size: 0.95rem;
+        transition: transform 160ms ease;
+      }
+
+      .system-prompt-toggle[aria-expanded="true"]::before {
+        transform: rotate(90deg);
+      }
+
+      .system-prompt-editor {
+        display: grid;
+        gap: 0.85rem;
+        margin-top: 0.8rem;
+        margin-bottom: 1rem;
+        padding: 1rem;
+        border-radius: var(--radius-lg);
+        background: rgba(255, 255, 255, 0.035);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+      }
+
+      .system-prompt-editor textarea {
+        min-height: 8.5rem;
+        resize: vertical;
+        padding: 1rem;
+        font: inherit;
+        line-height: 1.6;
+      }
+
+      .system-prompt-actions {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        flex-wrap: wrap;
+      }
+
+      .system-prompt-note {
+        color: var(--muted);
+        font-size: 0.92rem;
+        line-height: 1.5;
       }
 
       .empty-state {
@@ -627,6 +692,7 @@
 
         .hero,
         .controls,
+        .system-prompt-panel,
         .chat-area,
         .composer {
           padding-left: 1rem;
@@ -690,8 +756,8 @@
                     alt="Artistic rendering based on the Syracuse University logo with a stylized dragon motif"
                   />
                 </div>
-                <div class="eyebrow">WebLLM In-Browser Chat</div>
-                <h1>Private AI, fully local.</h1>
+                <div class="eyebrow">Ying Lin WebLLM Chat</div>
+                <h1>Ying Lin's private AI, fully local.</h1>
                 <p>
                   Load a WebLLM model directly in your browser, chat with it using
                   streaming responses, and keep everything on-device with no API
@@ -764,6 +830,35 @@
             </div>
           </section>
 
+          <section class="system-prompt-panel" aria-label="System prompt editor">
+            <button
+              id="systemPromptToggle"
+              class="system-prompt-toggle"
+              type="button"
+              aria-expanded="false"
+              aria-controls="systemPromptEditor"
+            >
+              System Prompt
+            </button>
+            <div id="systemPromptEditor" class="system-prompt-editor hidden">
+              <label class="sr-only" for="systemPromptInput">System prompt</label>
+              <textarea id="systemPromptInput" rows="6"></textarea>
+              <div class="system-prompt-actions">
+                <div class="system-prompt-note">
+                  Saving clears the current chat and starts the next conversation
+                  with this prompt.
+                </div>
+                <button
+                  id="saveSystemPromptButton"
+                  class="button-secondary"
+                  type="button"
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+          </section>
+
           <section id="chatArea" class="chat-area" aria-live="polite">
             <div id="emptyState" class="empty-state">
               <h2>Ready when you are.</h2>
@@ -794,7 +889,7 @@
     <script type="module">
       import * as webllm from "https://esm.run/@mlc-ai/web-llm";
 
-      const SYSTEM_PROMPT =
+      const DEFAULT_SYSTEM_PROMPT =
         "You are a helpful, friendly AI assistant running locally in the browser. Keep responses concise.";
       const PREFERRED_DEFAULT_MODEL =
         "TinyLlama-1.1B-Chat-v0.4-q4f32_1-MLC-1k";
@@ -817,10 +912,17 @@
       const webgpuValue = document.getElementById("webgpuValue");
       const chatArea = document.getElementById("chatArea");
       const emptyState = document.getElementById("emptyState");
+      const systemPromptToggle = document.getElementById("systemPromptToggle");
+      const systemPromptEditor = document.getElementById("systemPromptEditor");
+      const systemPromptInput = document.getElementById("systemPromptInput");
+      const saveSystemPromptButton = document.getElementById(
+        "saveSystemPromptButton",
+      );
       const composer = document.getElementById("composer");
       const promptInput = document.getElementById("promptInput");
       const sendButton = document.getElementById("sendButton");
 
+      let systemPrompt = DEFAULT_SYSTEM_PROMPT;
       let engine = null;
       let messages = createInitialMessages();
       let isLoading = false;
@@ -831,7 +933,7 @@
       let preferredModelMissing = false;
 
       function createInitialMessages() {
-        return [{ role: "system", content: SYSTEM_PROMPT }];
+        return [{ role: "system", content: systemPrompt }];
       }
 
       function escapeHtml(value) {
@@ -939,6 +1041,8 @@
         modelSelect.disabled = busy;
         loadButton.disabled = isLoading || isGenerating || !modelSelect.value;
         clearButton.disabled = isLoading || isGenerating;
+        saveSystemPromptButton.disabled =
+          isLoading || isGenerating || !systemPromptInput.value.trim();
         promptInput.disabled = !isReady || isLoading || isGenerating;
         sendButton.disabled =
           !isReady || isLoading || isGenerating || !promptInput.value.trim();
@@ -1170,6 +1274,27 @@
         }
       }
 
+      function toggleSystemPromptEditor() {
+        const isExpanded = systemPromptToggle.getAttribute("aria-expanded") === "true";
+        systemPromptToggle.setAttribute("aria-expanded", String(!isExpanded));
+        systemPromptEditor.classList.toggle("hidden", isExpanded);
+      }
+
+      async function saveSystemPrompt() {
+        const nextSystemPrompt = systemPromptInput.value.trim();
+        if (!nextSystemPrompt || isLoading || isGenerating) {
+          updateControls();
+          return;
+        }
+
+        systemPrompt = nextSystemPrompt;
+        systemPromptInput.value = systemPrompt;
+        await clearChat();
+        setStatus("Idle", isReady ? "System prompt updated" : "Prompt saved");
+        updateControls();
+        resizeComposer();
+      }
+
       async function stopGeneration() {
         if (!engine || !isGenerating) {
           return;
@@ -1284,7 +1409,11 @@
       loadButton.addEventListener("click", loadSelectedModel);
       clearButton.addEventListener("click", clearChat);
       stopButton.addEventListener("click", stopGeneration);
+      systemPromptToggle.addEventListener("click", toggleSystemPromptEditor);
+      saveSystemPromptButton.addEventListener("click", saveSystemPrompt);
       composer.addEventListener("submit", handleSubmit);
+
+      systemPromptInput.addEventListener("input", updateControls);
 
       promptInput.addEventListener("input", () => {
         resizeComposer();
@@ -1302,6 +1431,9 @@
         webgpuValue.textContent = "Error";
         showUnsupported(`Initialization failed: ${error.message}`);
       });
+
+      systemPromptInput.value = systemPrompt;
+      updateControls();
     </script>
   </body>
 </html>
